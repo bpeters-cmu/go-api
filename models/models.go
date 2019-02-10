@@ -4,6 +4,7 @@ import (
 	"fmt"
 	log "github.com/sirupsen/logrus"
 	"github.com/umahmood/haversine"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -40,6 +41,7 @@ type IpAccess struct {
 	Timestamp int     `json:"timestamp"`
 }
 
+//Inserts ConnectionEvent into DB
 func (c *ConnectionEvent) CreateConnection() error {
 
 	statement := fmt.Sprintf("INSERT INTO conn_events(event_uuid, username, ip, unix_timestamp) VALUES('%s', '%s', '%s', %d)", c.EventUUID, c.Username, c.IP, c.Timestamp)
@@ -51,11 +53,13 @@ func (c *ConnectionEvent) CreateConnection() error {
 	return nil
 }
 
+//Looks up geolocation info for a ConnectionEvent in the DB
 func (c *ConnectionEvent) CalculateGeo() {
 	ipArray := strings.Split(c.IP, ".")
 	ipRange := strings.Join(ipArray[0:3], ".")
 	geo := Geo{EventUUID: c.EventUUID}
 
+	//SQL statement matches first 3 segments of IP address to CIDR block in DB
 	statement := `
   SELECT latitude, longitude, accuracy_radius
   FROM "GeoLite2-City-Blocks-IPv4"
@@ -70,21 +74,32 @@ func (c *ConnectionEvent) CalculateGeo() {
 	geo.InsertGeo()
 }
 
-func (access *IpAccess) CalculateSpeed(c *ConnectionEvent) {
-	pointA := haversine.Coord{Lat: access.Latitude, Lon: access.Longitude}
-	pointB := haversine.Coord{Lat: c.CurrentGeo.Latitude, Lon: c.CurrentGeo.Longitude}
-	mi, _ := haversine.Distance(pointA, pointB)
-	time := Abs(access.Timestamp-c.Timestamp) / 3600
-	speed := int(mi) / time
-	access.Speed = speed
+//validates API request body is not missing fields
+func (c *ConnectionEvent) Validate() url.Values {
+	errs := url.Values{}
 
-	log.Info(fmt.Sprintf("Calculated speed of %d", speed))
+	if c.EventUUID == "" {
+		errs.Add("event_uuid", "event_uuid is a required field")
+	}
+	if c.Username == "" {
+		errs.Add("username", "username is a required field")
+	}
+	if c.IP == "" {
+		errs.Add("ip", "ip is a required field")
+	}
+	if c.Timestamp == 0 {
+		errs.Add("timestamp", "timestamp is a required field")
+	}
 
+	return errs
 }
 
+//Gets info on the preceding and subsequent ConnectionEvents
 func (c *ConnectionEvent) GetBeforeAfterIpAccess() (*IpAccess, *IpAccess) {
 	before := IpAccess{}
 	after := IpAccess{}
+
+	//sort by timestamp and grab the row before current timestamp
 	before_statement := `
   SELECT ip, lat, lon, radius, unix_timestamp
   FROM geo JOIN conn_events on geo.event_uuid = conn_events.event_uuid
@@ -98,7 +113,7 @@ func (c *ConnectionEvent) GetBeforeAfterIpAccess() (*IpAccess, *IpAccess) {
 	if err != nil {
 		log.Warn(err)
 	}
-
+	//sort by timestamp and grab the row after current timestamp
 	after_statement := `
   SELECT ip, lat, lon, radius, unix_timestamp
   FROM geo JOIN conn_events on geo.event_uuid = conn_events.event_uuid
@@ -116,6 +131,7 @@ func (c *ConnectionEvent) GetBeforeAfterIpAccess() (*IpAccess, *IpAccess) {
 	return &before, &after
 }
 
+//inserts geo location info in DB
 func (g *Geo) InsertGeo() {
 	statement := fmt.Sprintf("INSERT INTO geo(event_uuid, lat, lon, radius) VALUES('%s', '%f', '%f', %d)", g.EventUUID, g.Latitude, g.Longitude, g.Radius)
 	_, err := db.Exec(statement)
@@ -124,12 +140,28 @@ func (g *Geo) InsertGeo() {
 	}
 }
 
+//calculates speed using two sets of coordinates and the haversine formula to calculate distance in miles and determine speed in mph
+func (access *IpAccess) CalculateSpeed(c *ConnectionEvent) {
+	pointA := haversine.Coord{Lat: access.Latitude, Lon: access.Longitude}
+	pointB := haversine.Coord{Lat: c.CurrentGeo.Latitude, Lon: c.CurrentGeo.Longitude}
+	mi, _ := haversine.Distance(pointA, pointB)
+	//divide difference in timestamps by 3600 seconds to determine hours
+	time := Abs(access.Timestamp-c.Timestamp) / 3600
+	speed := int(mi) / time
+	access.Speed = speed
+
+	log.Info(fmt.Sprintf("Calculated speed of %d", speed))
+
+}
+
 func (access *IpAccess) IsEmpty() bool {
 	if access.IP == "" {
 		return true
 	}
 	return false
 }
+
+//glue function to calculate remain values required for response
 func (geoStatus *GeoStatus) CalculateResponse(access1, access2 *IpAccess, event *ConnectionEvent) {
 	if !access1.IsEmpty() {
 		access1.CalculateSpeed(event)

@@ -3,19 +3,18 @@ FROM golang as builder
 
 ENV GO111MODULE=on
 
-WORKDIR /app
-
-COPY *.go go.mod go.sum /app/
-
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod vendor
+WORKDIR $GOPATH/src/superman-detector
+COPY . .
 
 
+RUN CGO_ENABLED=1 GOOS=linux go build -mod vendor
 
-
+# run stage
 FROM alpine:3.7
-RUN apk add --update sqlite
+RUN apk add --update sqlite gcc musl-dev libc6-compat
 
-COPY --from=builder /app/superman-detector /app/
-COPY ./GeoLite2-City-Blocks-IPv4.db /db/
-
-CMD ["/app/superman-detector"]
+WORKDIR /app/
+COPY --from=builder /go/src/superman-detector/superman-detector .
+COPY GeoLite2-City-Blocks-IPv4.db .
+EXPOSE 3000
+CMD ["./superman-detector"]

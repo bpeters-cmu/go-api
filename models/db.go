@@ -43,6 +43,7 @@ func CreateTable() {
 
 	_, err := db.Exec(sql_table)
 	if err != nil {
+		log.Error(err)
 		log.Fatal("Error creating DB tables")
 	}
 	log.Info("Created tables conn_events and geo")

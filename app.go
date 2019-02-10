@@ -8,12 +8,16 @@ import (
 	"superman-detector/models"
 )
 
-func CreateEventEndPoint(w http.ResponseWriter, r *http.Request) {
+func EventHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var event models.ConnectionEvent
-	var response models.GeoStatus
 	if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+	validationErrors := event.Validate()
+	if len(validationErrors) > 0 {
+		respondWithJson(w, http.StatusBadRequest, validationErrors)
 		return
 	}
 	if err := event.CreateConnection(); err != nil {
@@ -21,6 +25,8 @@ func CreateEventEndPoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	event.CalculateGeo()
+
+	var response models.GeoStatus
 	response.CurrentGeo = event.CurrentGeo
 	access1, access2 := event.GetBeforeAfterIpAccess()
 	response.CalculateResponse(access1, access2, &event)
@@ -42,7 +48,7 @@ func respondWithJson(w http.ResponseWriter, code int, payload interface{}) {
 func main() {
 	models.InitDB("GeoLite2-City-Blocks-IPv4.db")
 	r := mux.NewRouter()
-	r.HandleFunc("/events", CreateEventEndPoint).Methods("POST")
+	r.HandleFunc("/events", EventHandler).Methods("POST")
 	if err := http.ListenAndServe(":3000", r); err != nil {
 		log.Fatal(err)
 	}
