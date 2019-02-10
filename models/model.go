@@ -1,13 +1,11 @@
-package main
+package models
 
 import (
-	"database/sql"
 	"fmt"
+	log "github.com/sirupsen/logrus"
+	"github.com/umahmood/haversine"
 	"strconv"
 	"strings"
-
-	_ "github.com/mattn/go-sqlite3"
-	"github.com/umahmood/haversine"
 )
 
 type ConnectionEvent struct {
@@ -42,31 +40,34 @@ type IpAccess struct {
 	Timestamp int     `json:"timestamp"`
 }
 
-func (c *ConnectionEvent) CreateConnection(db *sql.DB) error {
+func (c *ConnectionEvent) CreateConnection() error {
 
 	statement := fmt.Sprintf("INSERT INTO conn_events(event_uuid, username, ip, unix_timestamp) VALUES('%s', '%s', '%s', %d)", c.EventUUID, c.Username, c.IP, c.Timestamp)
 	_, err := db.Exec(statement)
 	if err != nil {
+		log.Warn("Error inserting connection event")
 		return err
 	}
 	return nil
 }
 
-func (c *ConnectionEvent) CalculateGeo(db *sql.DB) {
+func (c *ConnectionEvent) CalculateGeo() {
 	ipArray := strings.Split(c.IP, ".")
 	ipRange := strings.Join(ipArray[0:3], ".")
 	geo := Geo{EventUUID: c.EventUUID}
-	fmt.Println(ipRange)
 
-	statement := `SELECT latitude, longitude, accuracy_radius FROM "GeoLite2-City-Blocks-IPv4" WHERE network LIKE '` + ipRange + `%'`
-	fmt.Println(statement)
+	statement := `
+  SELECT latitude, longitude, accuracy_radius
+  FROM "GeoLite2-City-Blocks-IPv4"
+  WHERE network LIKE '` + ipRange + `%'
+  `
+	log.Info(fmt.Sprintf("Running query: %s", statement))
 	err := db.QueryRow(statement).Scan(&geo.Latitude, &geo.Longitude, &geo.Radius)
 	if err != nil {
-		fmt.Printf("error2")
-		fmt.Println(err)
+		log.Warn(err)
 	}
 	c.CurrentGeo = &geo
-
+	geo.InsertGeo()
 }
 
 func (access *IpAccess) CalculateSpeed(c *ConnectionEvent) {
@@ -77,46 +78,49 @@ func (access *IpAccess) CalculateSpeed(c *ConnectionEvent) {
 	speed := int(mi) / time
 	access.Speed = speed
 
+	log.Info(fmt.Sprintf("Calculated speed of %d", speed))
+
 }
 
-func (c *ConnectionEvent) GetBeforeAfterIpAccess(db *sql.DB) (*IpAccess, *IpAccess) {
-
+func (c *ConnectionEvent) GetBeforeAfterIpAccess() (*IpAccess, *IpAccess) {
 	before := IpAccess{}
 	after := IpAccess{}
 	before_statement := `
-  SELECT ip, latitude, longitude, accuracy_radius, unix_timestamp
+  SELECT ip, lat, lon, radius, unix_timestamp
   FROM geo JOIN conn_events on geo.event_uuid = conn_events.event_uuid
   WHERE unix_timestamp < ` + strconv.Itoa(c.Timestamp) + `
   ORDER BY unix_timestamp
   LIMIT 1
   `
+	log.Info(fmt.Sprintf("Running query: %s", before_statement))
+
 	err := db.QueryRow(before_statement).Scan(&before.IP, &before.Latitude, &before.Longitude, &before.Radius, &before.Timestamp)
 	if err != nil {
-		fmt.Printf("error2")
-		fmt.Println(err)
+		log.Warn(err)
 	}
 
 	after_statement := `
-  SELECT ip, latitude, longitude, accuracy_radius, unix_timestamp
+  SELECT ip, lat, lon, radius, unix_timestamp
   FROM geo JOIN conn_events on geo.event_uuid = conn_events.event_uuid
   WHERE unix_timestamp > ` + strconv.Itoa(c.Timestamp) + `
   ORDER BY unix_timestamp
   LIMIT 1
   `
 
+	log.Info(fmt.Sprintf("Running query: %s", after_statement))
+
 	err2 := db.QueryRow(after_statement).Scan(&after.IP, &after.Latitude, &after.Longitude, &after.Radius, &after.Timestamp)
 	if err2 != nil {
-		fmt.Printf("error2")
-		fmt.Println(err2)
+		log.Warn(err2)
 	}
 	return &before, &after
 }
 
-func (g *Geo) InsertGeo(db *sql.DB) {
+func (g *Geo) InsertGeo() {
 	statement := fmt.Sprintf("INSERT INTO geo(event_uuid, lat, lon, radius) VALUES('%s', '%f', '%f', %d)", g.EventUUID, g.Latitude, g.Longitude, g.Radius)
 	_, err := db.Exec(statement)
 	if err != nil {
-		fmt.Println(err)
+		log.Warn(err)
 	}
 }
 
@@ -126,7 +130,7 @@ func (access *IpAccess) IsEmpty() bool {
 	}
 	return false
 }
-func (geoStatus GeoStatus) CalculateResponse(access1, access2 *IpAccess, event *ConnectionEvent) {
+func (geoStatus *GeoStatus) CalculateResponse(access1, access2 *IpAccess, event *ConnectionEvent) {
 	if !access1.IsEmpty() {
 		access1.CalculateSpeed(event)
 		if access1.Speed > 500 {
