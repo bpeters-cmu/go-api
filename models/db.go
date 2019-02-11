@@ -25,8 +25,8 @@ func InitDB(filepath string) {
 func CreateTable() {
 	// create table if not exists
 	sql_table := `
-  DROP TABLE conn_events;
-  DROP TABLE geo;
+  DROP TABLE IF EXISTS conn_events;
+  DROP TABLE IF EXISTS geo;
 	CREATE TABLE IF NOT EXISTS conn_events(
 		event_uuid TEXT NOT NULL PRIMARY KEY,
 		username TEXT,

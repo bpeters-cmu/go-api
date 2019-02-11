@@ -9,6 +9,7 @@ import (
 	"strings"
 )
 
+// struct for parsing incoming requests
 type ConnectionEvent struct {
 	EventUUID  string `json:"event_uuid"`
 	Username   string `json:"username"`
@@ -17,6 +18,7 @@ type ConnectionEvent struct {
 	CurrentGeo *Geo   `json:"currentGeo"`
 }
 
+// struct to contain geolocation data for an event
 type Geo struct {
 	EventUUID string  `json:"-"`
 	Latitude  float64 `json:"lat"`
@@ -24,6 +26,7 @@ type Geo struct {
 	Radius    int     `json:"radius"`
 }
 
+// struct to hold response data
 type GeoStatus struct {
 	CurrentGeo         *Geo      `json:"currentGeo"`
 	TravelToCurrent    bool      `json:"travelToCurrentGeoSuspicious"`
@@ -32,6 +35,7 @@ type GeoStatus struct {
 	SubsequentIpAccess *IpAccess `json:"subsequentIpAccess"`
 }
 
+// struct for containing preceding/subsequent IP access data
 type IpAccess struct {
 	IP        string  `json:"ip"`
 	Speed     int     `json:"speed"`
@@ -99,11 +103,14 @@ func (c *ConnectionEvent) GetBeforeAfterIpAccess() (*IpAccess, *IpAccess) {
 	before := IpAccess{}
 	after := IpAccess{}
 
-	//sort by timestamp and grab the row before current timestamp
+	//sort by timestamp and grab the row before current timestamp,
+	// excluding current connection
 	before_statement := `
   SELECT ip, lat, lon, radius, unix_timestamp
   FROM geo JOIN conn_events on geo.event_uuid = conn_events.event_uuid
-  WHERE unix_timestamp < ` + strconv.Itoa(c.Timestamp) + `
+  WHERE username='` + c.Username + `'
+    AND unix_timestamp <= ` + strconv.Itoa(c.Timestamp) + `
+    AND conn_events.event_uuid != '` + c.EventUUID + `'
   ORDER BY unix_timestamp
   LIMIT 1
   `
@@ -112,12 +119,15 @@ func (c *ConnectionEvent) GetBeforeAfterIpAccess() (*IpAccess, *IpAccess) {
 	err := db.QueryRow(before_statement).Scan(&before.IP, &before.Latitude, &before.Longitude, &before.Radius, &before.Timestamp)
 	if err != nil {
 		log.Warn(err)
+	} else {
+		log.Info("Found a preceding IP event")
 	}
+
 	//sort by timestamp and grab the row after current timestamp
 	after_statement := `
   SELECT ip, lat, lon, radius, unix_timestamp
   FROM geo JOIN conn_events on geo.event_uuid = conn_events.event_uuid
-  WHERE unix_timestamp > ` + strconv.Itoa(c.Timestamp) + `
+  WHERE username='` + c.Username + `' AND unix_timestamp > ` + strconv.Itoa(c.Timestamp) + `
   ORDER BY unix_timestamp
   LIMIT 1
   `
@@ -127,7 +137,10 @@ func (c *ConnectionEvent) GetBeforeAfterIpAccess() (*IpAccess, *IpAccess) {
 	err2 := db.QueryRow(after_statement).Scan(&after.IP, &after.Latitude, &after.Longitude, &after.Radius, &after.Timestamp)
 	if err2 != nil {
 		log.Warn(err2)
+	} else {
+		log.Info("Found a subsequent IP event")
 	}
+
 	return &before, &after
 }
 
@@ -146,14 +159,14 @@ func (access *IpAccess) CalculateSpeed(c *ConnectionEvent) {
 	pointB := haversine.Coord{Lat: c.CurrentGeo.Latitude, Lon: c.CurrentGeo.Longitude}
 	mi, _ := haversine.Distance(pointA, pointB)
 	//divide difference in timestamps by 3600 seconds to determine hours
-	time := Abs(access.Timestamp-c.Timestamp) / 3600
-	speed := int(mi) / time
-	access.Speed = speed
-
-	log.Info(fmt.Sprintf("Calculated speed of %d", speed))
-
+	time := float64(Abs(access.Timestamp-c.Timestamp)) / 3600
+	speed := mi / time
+	// truncates down to int type
+	access.Speed = int(speed)
+	log.Info(fmt.Sprintf("Calculated speed of: %d for user: %s", access.Speed, c.Username))
 }
 
+// determine if IpAccess struct is empty
 func (access *IpAccess) IsEmpty() bool {
 	if access.IP == "" {
 		return true
@@ -184,6 +197,7 @@ func (geoStatus *GeoStatus) CalculateResponse(access1, access2 *IpAccess, event 
 
 }
 
+// returns absolute value of int
 func Abs(x int) int {
 	if x < 0 {
 		return -x
