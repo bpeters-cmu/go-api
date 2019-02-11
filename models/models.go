@@ -104,13 +104,11 @@ func (c *ConnectionEvent) GetBeforeAfterIpAccess() (*IpAccess, *IpAccess) {
 	after := IpAccess{}
 
 	//sort by timestamp and grab the row before current timestamp,
-	// excluding current connection
 	before_statement := `
   SELECT ip, lat, lon, radius, unix_timestamp
   FROM geo JOIN conn_events on geo.event_uuid = conn_events.event_uuid
   WHERE username='` + c.Username + `'
-    AND unix_timestamp <= ` + strconv.Itoa(c.Timestamp) + `
-    AND conn_events.event_uuid != '` + c.EventUUID + `'
+    AND unix_timestamp < ` + strconv.Itoa(c.Timestamp) + `
   ORDER BY unix_timestamp
   LIMIT 1
   `
@@ -179,6 +177,7 @@ func (geoStatus *GeoStatus) CalculateResponse(access1, access2 *IpAccess, event 
 	if !access1.IsEmpty() {
 		access1.CalculateSpeed(event)
 		if access1.Speed > 500 {
+			log.Info("Speed above 500, marking TravelToCurrent as suspicious")
 			geoStatus.TravelToCurrent = true
 		} else {
 			geoStatus.TravelToCurrent = false
@@ -187,10 +186,11 @@ func (geoStatus *GeoStatus) CalculateResponse(access1, access2 *IpAccess, event 
 	}
 	if !access2.IsEmpty() {
 		access2.CalculateSpeed(event)
-		if access1.Speed > 500 {
-			geoStatus.TravelToCurrent = true
+		if access2.Speed > 500 {
+			log.Info("Speed above 500, marking TravelFromCurrent as suspicious")
+			geoStatus.TravelFromCurrent = true
 		} else {
-			geoStatus.TravelToCurrent = false
+			geoStatus.TravelFromCurrent = false
 		}
 		geoStatus.SubsequentIpAccess = access2
 	}

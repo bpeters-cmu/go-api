@@ -17,6 +17,8 @@ func Router() *mux.Router {
 	return router
 }
 
+//TODO: add more tests, create fixtures for repeated actions, break tests up into smaller units
+
 func TestCreateEndpoint(t *testing.T) {
 	connEvent := &models.ConnectionEvent{
 		EventUUID: "85ad929a-db03-4bf4-9541-8f728fa12e42",
@@ -36,7 +38,7 @@ func TestCreateEndpoint(t *testing.T) {
 	assert.Equal(t, 39.2548, geoStatus.CurrentGeo.Latitude, "Latitude should be 39.2548")
 }
 
-func TestCreateEndpointWithPreceding(t *testing.T) {
+func TestCreateEndpointWithPrecedingSubsequent(t *testing.T) {
 	connEvent := &models.ConnectionEvent{
 		EventUUID: "85ad929a-db03-4bf4-9541-8f728fa12e42",
 		Username:  "bob",
@@ -49,12 +51,12 @@ func TestCreateEndpointWithPreceding(t *testing.T) {
 	models.InitDB("GeoLite2-City-Blocks-IPv4.db")
 	Router().ServeHTTP(response, request)
 	assert.Equal(t, 201, response.Code, "Response code should be 201")
-
+	// create event with preceding IP access
 	connEvent2 := &models.ConnectionEvent{
 		EventUUID: "85ad929a-db03-4bf4-9541-8f728fa12e43",
 		Username:  "bob",
 		IP:        "91.207.175.104",
-		Timestamp: 1515774800,
+		Timestamp: 1515004800,
 	}
 	requestBody2, _ := json.Marshal(connEvent2)
 	request2, _ := http.NewRequest("POST", "/events", bytes.NewBuffer(requestBody2))
@@ -66,4 +68,25 @@ func TestCreateEndpointWithPreceding(t *testing.T) {
 
 	assert.Equal(t, 201, response2.Code, "Response code should be 201")
 	assert.NotEmpty(t, geoStatus.PrecedingIpAccess, "Preceding IP access shouldn't be empty")
+	// create event with subsequent and preceding IP access
+	connEvent3 := &models.ConnectionEvent{
+		EventUUID: "85ad929a-db03-4bf4-9541-8f728fa12e44",
+		Username:  "bob",
+		IP:        "223.255.255.5",
+		Timestamp: 1514994800,
+	}
+	requestBody3, _ := json.Marshal(connEvent3)
+	request3, _ := http.NewRequest("POST", "/events", bytes.NewBuffer(requestBody3))
+	response3 := httptest.NewRecorder()
+	Router().ServeHTTP(response3, request3)
+	var geoStatus2 models.GeoStatus
+	// parse request body
+	json.NewDecoder(response3.Body).Decode(&geoStatus2)
+
+	assert.Equal(t, 201, response3.Code, "Response code should be 201")
+	assert.NotEmpty(t, geoStatus2.PrecedingIpAccess, "Preceding IP access shouldn't be empty")
+	assert.NotEmpty(t, geoStatus2.SubsequentIpAccess, "Subsequent IP access shouldn't be empty")
+	assert.Equal(t, true, geoStatus2.TravelFromCurrent, "Travel from current should be suspicious")
+	assert.Equal(t, false, geoStatus2.TravelToCurrent, "Travel to current should not be suspicious")
+
 }
